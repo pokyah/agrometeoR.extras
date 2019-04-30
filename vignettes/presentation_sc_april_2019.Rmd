@@ -1,0 +1,355 @@
+---
+title: "presentation SC april 2019 : The agrometeoR package"
+author: "Thomas Goossens"
+date: "4/23/2019"
+always_allow_html: yes
+output:
+  revealjs::revealjs_presentation:
+    css:
+      - "~/Documents/code/pokyah/craw-reveal-template/theme/craw.css"
+    center: no
+    highlight: pygments
+    incremental: yes
+    self_contained: true
+    slide_level: 2
+    theme: default
+    transition: slide
+    fig_caption: false
+    reveal_options:
+      previewLinks: false
+  md_document:
+    toc: no
+    toc_depth: 6
+    variant: markdown_github
+  word_document:
+    toc: no
+    toc_depth: '6'
+  pdf_document: default
+  odt_document:
+    fig_height: 5
+    fig_width: 7
+  html_document:
+    theme: default
+    toc: yes
+    toc_depth: 6
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+devtools::load_all()
+library(dplyr)
+library(sf)
+```
+
+# Installation
+
+## Package configuration
+
+Installation requires linux dependencies like gdal, proj4, etc (see README file).
+
+```{r eval=FALSE}
+devtools::install_github("pokyah/agrometeoR", ref = "master")
+library(agrometeoR)
+```
+
+# Dataset creation
+
+## Getting multiple hourly dataset
+
+Create a dataset via the `makeDataset` function that performs an API call to Agromet server
+```{r makeDataset}
+dataset = makeDataset(
+  api_request = "https://app.pameseb.be/agromet/api/v2/sp/cleandata",
+  sensors = "tsa",
+  stations = "all",
+  dfrom = "2019-03-01T15:00:00Z",
+  dto = "2019-03-02T15:00:00Z",
+  staticExpl = "elevation")
+
+dataset = dataset$output$value
+```
+
+## Accessing a dataset
+
+Each hour is stored in a separate dataframe
+```{r accessing-a-dataset}
+head(dataset$`20190301150000`)
+```
+
+# task creation
+
+## Convert dataset to tasks
+
+convert each dataframe into a `task` by mapping the function `makeTask`
+```{r makeTasks}
+# create the tasks
+tasks = purrr::map(dataset, makeTask, target = "tsa")
+
+# extract the required part of the tasks
+tasks = tasks %>% purrr::modify_depth(1, ~.$"output"$"value"$"task")
+
+# showing one example of task
+tasks$`20190301150000`
+```
+
+# Learner
+
+## invoking a learner
+
+The package comes with predefined learners according to what was decided during last SC.
+Simply invoke the preconfigured learners via `data("agrometeorLearners")`
+```{r invoking-learners}
+data("agrometeorLearners")
+```
+
+## Example of learner
+
+The learner are configured using the mlr package
+```{r learner-example, eval=FALSE}
+# agrometeorLearners$mulLR_lonLatAlt_NA
+ agrometeorLearners$mulLR_lonLatAlt_NA = makeFilterWrapper(
+    learner = makeLearner(
+      cl = "regr.lm",
+      id = "multiReg.alt_x_y",
+      predict.type = 'se'),
+    fw.method = "linear.correlation",
+    fw.mandatory.feat = c("elevation", "y", "x"),
+    fw.abs = 3)
+```
+
+# Model elaboration
+
+## Training a learner
+
+We train the learner `agrometeorLearners$mulLR_lonLatAlt_NA` as our benchamrk has shown this is the best one. Example with a single hourly dataset. This is done using `makeModel`
+
+```{r makeModel}
+# building the model
+model = makeModel(
+  task = tasks[[1]],
+  learner = agrometeorLearners$mulLR_lonLatAlt_NA) 
+# extracting the output
+model = model$output$value
+```
+
+## Trained model outputs
+
+we have the model but also results from LOOCV
+```{r trained-outputs}
+head(model$predictions)
+head(model$perfs$iters)
+```
+
+## Trained model itself
+
+it's an object of class `WrappedModel`
+```{r trained-class}
+model$trained
+```
+
+# Spatial prediction
+
+## Predicting using the trained model
+
+We can make a prediction on our grid (corresponding to RMI inca) using `makeSpatialization`.
+The grid comes preconfigured with the package
+
+```{r makeSpatialization}
+# predicting on the grid
+spatialization = makeSpatialization(
+  model = model$trained,
+  pred.grid = grid.df)
+
+# extracting the output
+head(spatialization$output$value$spatialized)
+```
+
+# exportation
+
+## exporting the spatialization as csv, json, geojson, etc
+
+The function `exportSpatialization` allows to export the spatialized data to standards formats
+```{r exportSpatialization}
+# exporting to json
+export = exportSpatialization(
+  spatialized = spatialization$output$value$spatialized,
+  format = "json")
+
+# inspecting what we get
+export = export$output$value
+```
+
+## Visualising the spatialized data
+
+the function `makeLeafletMap` is handy
+
+```{r makeLeafletMap}
+# create the map
+map = makeLeafletMap(
+  target = "tsa",
+  spatialized = spatialization$output$value$spatialized,
+  polygon_grid = grid.squares.sf, # comes preconfigured with the package 
+  stations_data = dataset$`20190301150000`,
+  stations_meta = stations.df, # comes preconfigured with the package 
+  key_grid = "px",
+  key_stations = "sid",
+  stations_coords = c("x", "y"),
+  crs = 3812,
+  title = "SC april 2019 example map")
+
+```
+
+
+# Defining the best spatialization method
+
+## idea : test various "explorative constructions"
+
+1 EC = 1 unique combination of 
+
+* multiple learners
+* multiple potential hyper-parameters
+* multiple explanatory variables
+* multiple data sources (stations) : test the interest of networks integration
+
+## Table of EC
+
+```{r explorative-constructions, echo = FALSE}
+explorative_constructions = read.csv2("./explorative_constructions.csv", sep = ";") %>%
+  dplyr::mutate_all(.funs = as.factor)
+head(explorative_constructions)
+```
+
+## Why EC
+
+* deliver data with metadata
+* which best EC among which tested EC's
+* easy shortcut name to precisely know what we are talking about
+
+## Testing EC's
+
+* Conduction of batches of benchmarks experiments
+
+# Benchmarking of EC's
+
+## Function to conduct benchmark
+
+The agrometeoR package offers a function for this : `makeBatchOfBenchExp`
+```{r batchbenchmark, eval = FALSE }
+# example
+bmrsResults = makeBatchOfBenchExp(
+  tasks = tasks,
+  learners = agrometeorLearners,
+  measures = list(rmse, mae, mse),
+  keep.pred = TRUE,
+  models = FALSE,
+  grouping = 100,
+  level = "mlr.benchmark",
+  resamplings = "LOO",
+  cpus = 4
+) 
+```
+
+## benchmark conduction difficulties 
+
+* memory intensive => split the results in chunks written to disks to free RAM
+* paralellel computing to speed up the computations.
+* run on dedicated server using `bash` in a tmux `session`
+* use scp to retrieve the results from server
+* hourly 2 years 5 learners => 24h of computation
+
+## Conducted benchmarks : 
+
+01/01/2016 -> 31/12/2017, 5 learners (KED, OK, NN1, IDW, MultiReg), with elevation as explanatory for KED, OK, and multiple linear reg.
+
+* daily tsa max pameseb
+* daily tsa max pameseb + IRM
+* hourly tsa pameseb
+* hourly tsa pameseb + IRM
+
+## summary statistics of hourly tsa Pameseb : RMSE
+
+```{r, echo = FALSE}
+hourly_tsa_pameseb_rmse = read.csv2("~/Desktop/sc_april_2019/tsa hourly Pameseb summary stats rmse.csv", sep = ";")
+hourly_tsa_pameseb_rmse
+```
+
+## summary statistics of hourly tsa Pameseb & IRM : RMSE
+
+```{r, echo = FALSE}
+hourly_tsa_pameseb_IRM_rmse = read.csv2("~/Desktop/sc_april_2019/tsa hourly Pameseb_IRM summary stats rmse.csv", sep = ";")
+hourly_tsa_pameseb_IRM_rmse
+```
+
+## summary statistics of hourly tsa Pameseb : Residuals
+```{r, echo = FALSE}
+hourly_tsa_pameseb_residuals = read.csv2("~/Desktop/sc_april_2019/tsa hourly Pameseb summary stats residuals.csv", sep = ";")
+hourly_tsa_pameseb_residuals
+```
+
+## summary statistics of hourly tsa Pameseb & IRM : Residuals
+```{r, echo = FALSE}
+hourly_tsa_pameseb__IRM_residuals = read.csv2("~/Desktop/sc_april_2019/tsa hourly Pameseb_IRM summary stats residuals.csv", sep = ";")
+hourly_tsa_pameseb__IRM_residuals
+```
+
+## summary statistics of daily tsa max Pameseb : RMSE
+
+```{r, echo = FALSE}
+daily_tsamax_pameseb_rmse = read.csv2("~/Desktop/sc_april_2019/tsamax daily Pameseb summary stats rmse.csv", sep = ";")
+daily_tsamax_pameseb_rmse
+```
+
+## summary statistics of daily tsa max Pameseb & IRM : RMSE
+
+```{r, echo = FALSE}
+daily_tsamax_pameseb_IRM_rmse = read.csv2("~/Desktop/sc_april_2019/tsamax daily Pameseb_IRM summary stats rmse.csv", sep = ";")
+daily_tsamax_pameseb_IRM_rmse
+```
+
+## summary statistics of daily tsa max Pameseb : Residuals
+```{r, echo = FALSE}
+daily_tsamax_pameseb_residuals = read.csv2("~/Desktop/sc_april_2019/tsamax daily Pameseb summary stats residuals.csv", sep = ";")
+daily_tsamax_pameseb_residuals
+```
+
+## summary statistics of daily tsa max Pameseb & IRM : Residuals
+```{r, echo = FALSE}
+daily_tsamax_pameseb_IRM_residuals = read.csv2("~/Desktop/sc_april_2019/tsamax daily Pameseb_IRM summary stats residuals.csv", sep = ";")
+daily_tsamax_pameseb_IRM_residuals
+```
+
+
+## Boxplots of hourly tsa Pameseb : RMSE
+
+![]("~/Desktop/sc_april_2019_static/tsa_hourly_boxplot_rmse_global_pameseb_no_outliers.png")
+
+## Boxplots of hourly tsa Pameseb & IRM : RMSE
+
+![]("~/Desktop/sc_april_2019_static/tsa_hourly_boxplot_rmse_global_pameseb_irm_no_outliers.png")
+
+## Boxplots of hourly tsa Pameseb : Residuals
+
+![]("~/Desktop/sc_april_2019_static/tsa_hourly_boxplot_residuals_global_pameseb_no_outliers.png")
+
+## Boxplots of hourly tsa Pameseb & IRM : Residuals
+
+![]("~/Desktop/sc_april_2019_static/tsa_hourly_boxplot_residuals_global_pameseb_irm_no_outliers.png")
+
+## Boxplots of daily tsa max Pameseb : RMSE
+
+![]("~/Desktop/sc_april_2019_static/tsamax_daily_boxplot_rmse_global_pameseb_no_outliers.png")
+
+## Boxplots of daily tsa max Pameseb & IRM : RMSE
+
+![]("~/Desktop/sc_april_2019_static/tsamax_daily_boxplot_rmse_global_pameseb_irm_no_outliers.png")
+
+## Boxplots of daily tsa max Pameseb : Residuals
+
+![]("~/Desktop/sc_april_2019_static/tsamax_daily_boxplot_residuals_global_pameseb_no_outliers.png")
+
+## Boxplots of daily tsa max Pameseb & IRM : Residuals
+
+![]("~/Desktop/sc_april_2019_static/tsamax_daily_boxplot_residuals_global_pameseb_irm_no_outliers.png")

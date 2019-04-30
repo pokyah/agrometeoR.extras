@@ -1,0 +1,24 @@
+---
+title: "Intercomparison at Humain"
+author: "Thomas Goossens"
+date: "2/7/2019"
+output: html_document
+bibliography: ../inst/bibliography/bibliography.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+devtools::load_all()
+```
+
+```{r}
+datasetHumain = makeDataset(
+  stations = "61",
+  dfrom = "2015-01-01T00:00:00Z",
+  dto = "2017-01-01T00:00:00Z",
+  sensor = "tsa, ens, vtt")
+
+# converting to df
+datasetHumain = do.call(rbind.data.frame, datasetHumain$output$value)
+```
+

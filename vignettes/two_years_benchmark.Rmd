@@ -1,0 +1,29 @@
+---
+title: "a 2 years benchmark"
+author: "Thomas Goossens"
+date: "11/26/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+devtools::load_all()
+```
+
+## R Markdown
+
+```{r}
+# twoYears = makeDataset(json = "../data-raw/extdata/AGROMET/twoYears.json", sensor = "tsa")
+# 
+# summary(twoYears)
+# 
+# tasks = makeTasks(dataset = twoYears, target = "tsa")
+# 
+# data("learners")
+# 
+# ZEPP = learners$lrn.lm.alt_x_y
+# bmr = makeBenchmark(parallel = TRUE, cores = 4, tasks = tasks, learners = ZEPP)
+```
+
+
